@@ -93,7 +93,6 @@
 				position+=1;
 				var value = 0;
 				// 1 byte 2 float 3 short 4 len+string 5 double
-
 				if (type == 1){
 					value = _buffer[position];
 				}
@@ -216,42 +215,21 @@
 			_isWaiting = true;
 			var buffer = _buffers[0];
 			_buffers.shift();
-			device.write(buffer,function(){
-				setTimeout(function(){
+			var msg = {};
+			msg.buffer = buffer;
+			mConnection.postMessage(msg);
+			setTimeout(function(){
 					_isWaiting = false;
 					writePackage();
-				},20);
-			}); 
+				},20); 
 		}
-	}
-	ext._getStatus = function() {
-        return status?{status: 2, msg: 'Ready'}:{status: 1, msg: 'Not Ready'};
-    };
-	ext._deviceConnected = function(dev) {
-	    if(device) return;
-	    console.log("_deviceConnected");
-	    device = dev;
-	    device.open(deviceOpened);
-	    status = true;
-	};
-	ext._deviceRemoved = function(dev) {
-	    if(device != dev) return;
-	    if(poller) poller = clearInterval(poller);
-	    device = null;
-	    status = false;
-	};
-	ext._shutdown = function() {
-	    if(poller) poller = clearInterval(poller);
-	    if(device) device.close();
-	    device = null;
-	    status = false;
 	}
 	var arrayBufferFromArray = function(data){
         var result = new Int8Array(data.length);
         for(var i=0;i<data.length;i++){
             result[i] = data[i];
         }
-        return result;
+        return data;
     }
 
     //************* mBot Blocks ***************//
@@ -455,7 +433,7 @@
 			port = ports[port];
 		}
 		var deviceId = 1;
-		var extId = genNextID(port,0);
+		var extId = 0;//genNextID(port,0);
 		var data = [extId, 0x01, deviceId, port];
 		data = [data.length+3, 0xff, 0x55, data.length].concat(data);
 		_selectors["callback_"+extId] = function(v){
@@ -624,6 +602,61 @@
 			ircode:["A","B","C","D","E","F","↑","↓","←","→","Setting","R0","R1","R2","R3","R4","R5","R6","R7","R8","R9"],
 		}
     };
-	var hid_info = {type: 'hid', vendor: 0x0416, product: 0xffff};
-	ScratchExtensions.register('Makeblock mBot', descriptor, ext, hid_info);
+    var mConnection;
+    var mStatus = 0;
+	function getRequest() {
+	    var url = location.search; 
+	    var theRequest = new Object();
+	    if (url.indexOf("?") != -1) {
+		var str = url.substr(1);
+		if (str.indexOf("&") != -1) {
+		    strs = str.split("&");
+		    for (var i = 0; i < strs.length; i++) {
+			theRequest[strs[i].split("=")[0]] = unescape(strs[i].split("=")[1]);
+		    }
+		} else {
+		    theRequest[str.split("=")[0]] = unescape(str.split("=")[1]);
+		}
+	    }
+	    return theRequest;
+	}
+	var makeblockAppID = getRequest().id?getRequest().id:"clgdmbbhmdlbcgdffocenbbeclodbndh"; //unique app ID for Hummingbird Scratch App
+   
+	ext._getStatus = function() {
+        return {status: mStatus, msg: mStatus==2?'Ready':'Not Ready'};
+    };
+	ext._shutdown = function() {
+	    if(poller) poller = clearInterval(poller);
+	    status = false;
+	}
+    function getMakeblockAppStatus() {
+        chrome.runtime.sendMessage(makeblockAppID, {message: "STATUS"}, function (response) {
+            if (response === undefined) { //Chrome app not found
+                console.log("Chrome app not found");
+                mStatus = 0;
+                setTimeout(getMakeblockAppStatus, 1000);
+            }
+            else if (response.status === false) { //Chrome app says not connected
+                mStatus = 1;
+                setTimeout(getMakeblockAppStatus, 1000);
+            }
+            else {// successfully connected
+                if (mStatus !==2) {
+                    console.log("Connected");
+                    mConnection = chrome.runtime.connect(makeblockAppID);
+                    mConnection.onMessage.addListener(onMsgApp);
+                }
+                mStatus = 2;
+                setTimeout(getMakeblockAppStatus, 1000);
+            }
+        });
+    };
+    function onMsgApp(msg) {
+		var buffer = msg.buffer;
+        for(var i=0;i<buffer.length;i++){
+        	onParse(buffer[i]);
+        }
+    };
+    getMakeblockAppStatus();
+	ScratchExtensions.register('Makeblock mBot', descriptor, ext);
 })({});
